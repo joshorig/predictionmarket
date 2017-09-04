@@ -33,6 +33,7 @@ contract PredictionMarket is Administered,Terminable {
 	event LogBet(bytes32 questionId, address indexed gambler, uint amount, bool guess);
 	event LogQuestionAnswered(bytes32 questionId, bool answer, address indexed trustedSource);
 	event LogBettingSuspended(bytes32 questionId, address indexed administrator);
+	event LogBettingUnSuspended(bytes32 questionId, address indexed administrator);
 
 	function addNewQuestion(bytes32 _questionId, string _question, address _trustedSource, uint _duration)
 	public
@@ -166,7 +167,7 @@ contract PredictionMarket is Administered,Terminable {
 		QuestionStruct questionStruct = questions[_questionId];
 		require(questionStruct.answer == Answers.None && questionStruct.suspend); //can only unsuspend a suspended question
 		questionStruct.suspend = false;
-		LogBettingSuspended(_questionId,msg.sender);
+		LogBettingUnSuspended(_questionId,msg.sender);
 		return true;
 	}
 
