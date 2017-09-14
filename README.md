@@ -2,19 +2,18 @@
 
 The project will start as a database whereby:
 
-* as an administrator, you can add a yes/no question.
-* as a regular user you can bet on an outcome of the question.
-* as a trusted source, you can resolve the question.
-* as a regular user, you can trigger the mutual-based payouts.
+* as a regular user, you can create a prediction market for  dice roll games and become the markets owner
+* as an owner, you can add and withdraw funds from the prediction market
+* as an administrator, you can start a new dice roll game.
+* as an administrator, you can set and update the winning odds on a dice roll game.
+* a prediction market must have sufficient funds to pay out on any winning bets
+* as a regular user you can bet on an outcome of a dice roll.
+* as a administrator, you can trigger a dice roll for a specific game via OraclizeIt
+* as a regular user, you can withdraw any winnings
 
-Eventually, you will refactor it to include:
-
-* access to oracles.
-* market-making.
+* This project uses a hub & spoke model where the hub contract creates prediction markets (spokes) and handles the user interactions
 
 ## TODO
 
 * Add more tests
-* Add oracles
-* Add market-making
-* Update UI to use new contract interface
+* Add a UI to use new contract interface

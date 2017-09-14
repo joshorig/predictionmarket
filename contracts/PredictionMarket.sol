@@ -2,172 +2,219 @@ pragma solidity ^0.4.11;
 
 
 import 'zeppelin-solidity/contracts/math/SafeMath.sol';
+import './OraclizeAPI_0.4.sol';
 import './Administered.sol';
 import './Terminable.sol';
 
-contract PredictionMarket is Administered,Terminable {
+//Admins use oracalise to answer
+//Admins must suspend better before answering
+//Admins set odds on questions and can update those odds
+//Each individual bet has its odds
+//Bets must be able to be covered by market balance, owner can add funds to the market to cover any risk
 
-	enum Answers { None, Yes, No }
+contract PredictionMarket is Administered,usingOraclize {
 
-	struct QuestionStruct {
-	 string question;
-	 address trustedSource;
+	struct DiceGameStruct {
+	 uint result; //result of oracalizeit dice roll
 	 uint deadline;
-	 Answers answer;
 	 bool suspend;
-	 uint totalYes;
-	 uint totalNo;
-	 uint multiplyer;
-	 uint remainder;
+	 uint totalAmount;
+	 uint currentMultiplyer; //setting the odds, users will win amount bet * multiplier
+	 uint maxBet;
+	 uint[] payouts; //total payouts for each answer
+	 uint maxPayout; //max to be paid out for this question
 	}
 
 	struct BetStruct {
-	 uint amountYes;
-	 uint amountNo;
+	 address gambler;
+	 bytes32 gameId;
+	 uint guess;
+	 uint amount;
+	 uint multiplyer;
+	 uint amountPaid;
 	}
 
-  mapping (bytes32 => QuestionStruct) public questions;
-	mapping (address => mapping (bytes32 => BetStruct)) public bets;
+  mapping (bytes32 => DiceGameStruct) public games;
+	mapping (bytes32 => BetStruct) public bets;
 
-	event LogNewQuestion(bytes32 questionId, string question, address indexed trustedSource, uint deadline, address indexed administrator);
-	event LogBet(bytes32 questionId, address indexed gambler, uint amount, bool guess);
-	event LogQuestionAnswered(bytes32 questionId, bool answer, address indexed trustedSource);
-	event LogBettingSuspended(bytes32 questionId, address indexed administrator);
-	event LogBettingUnSuspended(bytes32 questionId, address indexed administrator);
+	uint public balance; //markets funds
+	uint public totalMaxAtRisk; //total of max payouts for each question - total amount bet on each question (or 0 if negative)
+	bytes32 public diceWaitingForOraclize;
 
-	function addNewQuestion(bytes32 _questionId, string _question, address _trustedSource, uint _duration)
+	event LogNewDiceGame(bytes32 gameId, uint multiplyer, uint maxBet, uint deadline, address indexed administrator);
+	event LogBet(bytes32 gameId, address indexed gambler, uint amount, uint guess);
+	event LogBettingSuspended(bytes32 gameId, address indexed administrator);
+	event LogBettingUnSuspended(bytes32 gameId, address indexed administrator);
+	event LogMarketFundsAdded(address indexed owner, uint amount);
+	event LogPayout(bytes32 betId, bytes32 gameId, address indexed gambler, uint amount);
+	event LogRefund(bytes32 betId, bytes32 gameId, address indexed gambler, uint amount);
+	event LogOraclizeQuery(string description);
+	event LogDiceRolled(bytes32 gameId, uint answer);
+
+	function PredictionMarket(address _originator)
+	Administered(_originator)
+	{
+
+	}
+
+	function addNewDiceGame(address _originator, bytes32 _gameId, uint _multiplyer, uint _maxBet, uint _duration)
 	public
-	fromAdministrator
+	onlyHub
+	fromAdministrator(_originator)
 	returns (bool success)
 	{
-		require(_trustedSource != address(0));
-		QuestionStruct questionStruct = questions[_questionId];
-		require(questionStruct.trustedSource == address(0)); //do not use previously used Id
+		//require(_multiplyer > 0 && _maxBet > 0);
+		DiceGameStruct diceGameStruct = games[_gameId];
+		//require(diceGameStruct.currentMultiplyer > 0); //do not use previously used Id
 		uint deadline = block.number+_duration;
-		questionStruct.answer = Answers.None;
-		questionStruct.question = _question;
-		questionStruct.trustedSource = _trustedSource;
-		questionStruct.deadline = deadline;
-		LogNewQuestion(_questionId,_question,_trustedSource,deadline,msg.sender);
+		diceGameStruct.currentMultiplyer = _multiplyer;
+		diceGameStruct.maxBet = _maxBet;
+		diceGameStruct.deadline = deadline;
+		diceGameStruct.payouts = new uint[](5);
+		LogNewDiceGame(_gameId,_multiplyer,_maxBet,deadline,msg.sender);
 		return true;
 	}
 
-	function bet(bytes32 _questionId, bool _guess)
+	function addMarketFunds(address _originator)
+	public
+	onlyHub
+	onlyOwner(_originator)
+	payable
+	returns (bool success)
+	{
+		balance = SafeMath.add(balance,msg.value);
+		LogMarketFundsAdded(_originator,msg.value);
+		return true;
+	}
+
+	function bet(bytes32 _betId, bytes32 _gameId, uint _guess)
 	public
 	payable
 	returns (bool success)
 	{
-		QuestionStruct questionStruct = questions[_questionId];
-		require(questionStruct.trustedSource != address(0)); //Question should exist
-		require(questionStruct.answer == Answers.None && !questionStruct.suspend);
-		require(msg.sender != questionStruct.trustedSource); //trusted source cannot bet
-		BetStruct betStruct = bets[msg.sender][_questionId];
-		if(_guess)
+		BetStruct betStruct = bets[_betId];
+		require(betStruct.gambler == address(0)); //_betId must be unique
+		require(_guess >= 1 && _guess <= 6); //_guess within range 1-6
+		DiceGameStruct diceGameStruct = games[_gameId];
+		require(diceGameStruct.currentMultiplyer >0); //Question should exist
+		require(diceGameStruct.result == 0 && !diceGameStruct.suspend);
+		require(msg.value <= diceGameStruct.maxBet);
+
+		//Check we have required balance to cover risk
+		uint betPayout = SafeMath.mul(diceGameStruct.currentMultiplyer,msg.value);
+		uint updatedPayout = SafeMath.add(diceGameStruct.payouts[_guess-1],betPayout);
+		if(updatedPayout > diceGameStruct.maxPayout)
 		{
-			betStruct.amountYes = SafeMath.add(betStruct.amountYes,msg.value);
-			questionStruct.totalYes = SafeMath.add(questionStruct.totalYes,msg.value);
+			uint difference = SafeMath.sub(updatedPayout,diceGameStruct.maxPayout);
+			diceGameStruct.maxPayout = updatedPayout;
+			totalMaxAtRisk = SafeMath.add(totalMaxAtRisk,difference);
 		}
-		else
-		{
-			betStruct.amountNo = SafeMath.add(betStruct.amountNo,msg.value);
-			questionStruct.totalNo = SafeMath.add(questionStruct.totalNo,msg.value);
-		}
-		LogBet(_questionId,msg.sender,msg.value,_guess);
+
+		assert(totalMaxAtRisk<balance); //We cannot accept bets that we cannot cover/payout
+
+
+		betStruct.gambler = msg.sender;
+		betStruct.gameId = _gameId;
+		betStruct.guess = _guess;
+		betStruct.multiplyer = diceGameStruct.currentMultiplyer;
+		betStruct.amount = msg.value;
+
+		LogBet(_gameId,msg.sender,msg.value,_guess);
 		return true;
 	}
 
-	function answerQuestion(bytes32 _questionId, bool _answer)
+	function rollDice(address _originator, bytes32 _gameId)
 	public
+	onlyHub
+	fromAdministrator(_originator)
 	returns (bool success)
 	{
-		QuestionStruct questionStruct = questions[_questionId];
-		require(msg.sender == questionStruct.trustedSource); //only trusted source can asnwer
-		require(questionStruct.answer == Answers.None);
-		require(questionStruct.deadline >= block.number);
+		DiceGameStruct diceGameStruct = games[_gameId];
+		require(diceGameStruct.currentMultiplyer >0); //Question should exist
+		require(diceGameStruct.result == 0); //question has not been answered
+		require(diceWaitingForOraclize == 0); //we can only answer one question at a time
+		require(diceGameStruct.deadline >= block.number);
 
-		uint totalAmount = SafeMath.add(questionStruct.totalYes,questionStruct.totalNo);
+		assert(suspendBetting(_originator,_gameId)); //We need to suspend betting since the answer could be made visible before the block is mined
+		diceWaitingForOraclize = _gameId;
 
-		if(_answer)
-		{
-			questionStruct.answer = Answers.Yes;
-			questionStruct.multiplyer = totalAmount / questionStruct.totalYes;
-      questionStruct.remainder = totalAmount % questionStruct.totalYes;
-		}
-		else
-		{
-			questionStruct.answer = Answers.No;
-			questionStruct.multiplyer = totalAmount / questionStruct.totalNo;
-      questionStruct.remainder = totalAmount % questionStruct.totalNo;
-		}
-		LogQuestionAnswered(_questionId,_answer,msg.sender);
+		LogOraclizeQuery("Oraclize query was sent, standing by for the answer..");
+    oraclize_query("WolframAlpha", "random number between 1 and 6");
 		return true;
 	}
 
-	function claimWinnings(bytes32 _questionId)
+	function __callback(bytes32 myid, string result)
+  {
+    require(msg.sender == oraclize_cbAddress());
+
+		bytes32 gameId = diceWaitingForOraclize;
+    diceWaitingForOraclize = 0;
+
+		DiceGameStruct diceGameStruct = games[gameId];
+		require(diceGameStruct.currentMultiplyer >0); //Question should exist
+		require(diceGameStruct.result == 0); //question has not been answered
+		uint diceRoll = parseInt(result);
+		diceGameStruct.result = diceRoll;
+		LogDiceRolled(gameId,diceRoll);
+	}
+
+	function claimWinnings(bytes32 _betId)
 	public
 	returns (bool success)
 	{
-		BetStruct betStruct = bets[msg.sender][_questionId];
-		QuestionStruct questionStruct = questions[_questionId];
-		require((betStruct.amountYes > 0 && questionStruct.answer == Answers.Yes) || (betStruct.amountNo > 0 && questionStruct.answer == Answers.No)); //Need to have winning bet
-		uint winnings;
-		uint multipliedPart;
-		uint remainderPart;
-		if(questionStruct.answer == Answers.Yes)
-		{
-			multipliedPart = SafeMath.mul(betStruct.amountYes,questionStruct.multiplyer);
-			remainderPart = SafeMath.mul(betStruct.amountYes,questionStruct.remainder) / questionStruct.totalYes;
-			winnings = SafeMath.add(multipliedPart,remainderPart);
-		}
-		else
-		{
-			multipliedPart = SafeMath.mul(betStruct.amountNo,questionStruct.multiplyer);
-			remainderPart = SafeMath.mul(betStruct.amountNo,questionStruct.remainder) / questionStruct.totalNo;
-			winnings = SafeMath.add(multipliedPart,remainderPart);
-		}
+		BetStruct betStruct = bets[_betId];
+		require(msg.sender == betStruct.gambler); //Only payout the actor who made the bet
+		DiceGameStruct diceGameStruct = games[betStruct.gameId];
+		require(diceGameStruct.result > 0 && betStruct.guess == diceGameStruct.result); //question has been answered and the bet was correct
+		require(betStruct.amountPaid == 0); //bet must not have already been paid out
+		uint winnings = SafeMath.mul(betStruct.amount,betStruct.multiplyer);
 		require(winnings > 0);
-		betStruct.amountYes = 0;
-		betStruct.amountNo = 0;
+		betStruct.amountPaid = winnings;
+		balance = SafeMath.sub(balance,winnings);
 		msg.sender.transfer(winnings);
+		LogPayout(_betId,betStruct.gameId,msg.sender,winnings);
 		return true;
 	}
 
-	function claimRefund(bytes32 _questionId)
+	function claimRefund(bytes32 _betId)
 	public
 	returns (bool success)
 	{
-		BetStruct betStruct = bets[msg.sender][_questionId];
-		require(betStruct.amountYes > 0 || betStruct.amountNo > 0); //Need to have made a bet
-		QuestionStruct questionStruct = questions[_questionId];
-		require(questionStruct.answer == Answers.None && questionStruct.deadline<block.number);
-		uint refundAmount = SafeMath.add(betStruct.amountYes,betStruct.amountNo);
-		betStruct.amountYes = 0;
-		betStruct.amountNo = 0;
+		BetStruct betStruct = bets[_betId];
+		require(msg.sender == betStruct.gambler); //Only refund the actor who made the bet
+		DiceGameStruct diceGameStruct = games[betStruct.gameId];
+		require(diceGameStruct.result == 0 && diceGameStruct.deadline<block.number);// Only if question if unanswered and expired
+		require(betStruct.amount > 0);
+		uint refundAmount = betStruct.amount;
+		betStruct.amount = 0;
 		msg.sender.transfer(refundAmount);
+		LogRefund(_betId,betStruct.gameId,msg.sender,refundAmount);
 		return true;
 	}
 
-	function suspendBetting(bytes32 _questionId)
+	function suspendBetting(address _originator, bytes32 _gameId)
 	public
-	fromAdministrator
+	onlyHub
+	fromAdministrator(_originator)
 	returns (bool success)
 	{
-		QuestionStruct questionStruct = questions[_questionId];
-		require(questionStruct.answer == Answers.None && !questionStruct.suspend); //can only suspend a live question
-		questionStruct.suspend = true;
-		LogBettingSuspended(_questionId,msg.sender);
+		DiceGameStruct diceGameStruct = games[_gameId];
+		require(diceGameStruct.result == 0 && !diceGameStruct.suspend); //can only suspend a live question
+		diceGameStruct.suspend = true;
+		LogBettingSuspended(_gameId,msg.sender);
 		return true;
 	}
 
-	function unSuspendBetting(bytes32 _questionId)
+	function unSuspendBetting(address _originator, bytes32 _gameId)
 	public
-	fromAdministrator
+	onlyHub
+	fromAdministrator(_originator)
 	returns (bool success)
 	{
-		QuestionStruct questionStruct = questions[_questionId];
-		require(questionStruct.answer == Answers.None && questionStruct.suspend); //can only unsuspend a suspended question
-		questionStruct.suspend = false;
-		LogBettingUnSuspended(_questionId,msg.sender);
+		DiceGameStruct diceGameStruct = games[_gameId];
+		require(diceGameStruct.result == 0 && diceGameStruct.suspend); //can only unsuspend a suspended question
+		diceGameStruct.suspend = false;
+		LogBettingUnSuspended(_gameId,msg.sender);
 		return true;
 	}
 
