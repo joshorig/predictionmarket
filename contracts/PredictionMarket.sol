@@ -22,7 +22,7 @@ contract PredictionMarket is Administered,usingOraclize {
 	 uint currentmultiplier; //setting the odds, users will win amount bet * multiplier
 	 uint maxBet;
 	 uint[] payouts; //total payouts for each answer
-	 uint maxPayout; //max to be paid out for this question
+	 uint maxPayout; //max to be paid out for this game
 	}
 
 	struct BetStruct {
@@ -46,6 +46,7 @@ contract PredictionMarket is Administered,usingOraclize {
 	event LogBettingSuspended(bytes32 gameId, address indexed administrator);
 	event LogBettingUnSuspended(bytes32 gameId, address indexed administrator);
 	event LogMarketFundsAdded(address indexed owner, uint amount);
+	event LogMarketFundsWithdrawn(address indexed owner, uint amount);
 	event LogPayout(bytes32 betId, bytes32 gameId, address indexed gambler, uint amount);
 	event LogRefund(bytes32 betId, bytes32 gameId, address indexed gambler, uint amount);
 	event LogOraclizeQuery(string description);
@@ -84,6 +85,19 @@ contract PredictionMarket is Administered,usingOraclize {
 	{
 		balance = SafeMath.add(balance,msg.value);
 		LogMarketFundsAdded(_originator,msg.value);
+		return true;
+	}
+
+	function withdrawMarketFunds(address _originator, uint _amount)
+	onlyHub
+	onlyOwner(_originator)
+	returns (bool success)
+	{
+		uint availableBalance = SafeMath.sub(balance,totalMaxAtRisk);
+		require(availableBalance<=_amount);
+		balance = SafeMath.sub(balance,_amount);
+		_originator.transfer(_amount);
+		LogMarketFundsWithdrawn(_originator,_amount);
 		return true;
 	}
 
@@ -154,6 +168,12 @@ contract PredictionMarket is Administered,usingOraclize {
 		require(diceGameStruct.currentmultiplier >0); //Question should exist
 		require(diceGameStruct.result == 0); //question has not been answered
 		uint diceRoll = parseInt(result);
+		uint payout = betStruct.payouts[diceRoll];
+		if(payout > 0)
+		{
+			balance = SafeMath.sub(totalMaxAtRisk,balance);
+			totalMaxAtRisk = SafeMath.sub(totalMaxAtRisk,payout);
+		}
 		diceGameStruct.result = diceRoll;
 		LogDiceRolled(gameId,diceRoll);
 	}
@@ -170,7 +190,6 @@ contract PredictionMarket is Administered,usingOraclize {
 		uint winnings = SafeMath.mul(betStruct.amount,betStruct.multiplier);
 		require(winnings > 0);
 		betStruct.amountPaid = winnings;
-		balance = SafeMath.sub(balance,winnings);
 		msg.sender.transfer(winnings);
 		LogPayout(_betId,betStruct.gameId,msg.sender,winnings);
 		return true;

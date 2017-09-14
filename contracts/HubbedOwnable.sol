@@ -14,7 +14,7 @@ contract HubbedOwnable {
 
   /**
    * @dev The HubbedOwnable constructor sets the `hub` of the contract to the sender
-   * account (hub contract) and the owner to the
+   * account (hub contract) and the owner to the orginal message sender (end user) _originator
    */
   function HubbedOwnable(address _originator) {
     hub = msg.sender;

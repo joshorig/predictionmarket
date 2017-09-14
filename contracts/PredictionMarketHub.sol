@@ -49,6 +49,15 @@ contract PredictionMarketHub {
     return true;
   }
 
+  function withdrawMarketFunds(address _predictionMarketAddress, uint _amount)
+  public
+  onlyIfPredictionMarket(_predictionMarketAddress)
+  {
+    PredictionMarket predictionMarket = PredictionMarket(_predictionMarketAddress);
+    assert(predictionMarket.withdrawMarketFunds.(msg.sender,_amount));
+    return true;
+  }
+
   function addNewDiceGame(address _predictionMarketAddress, bytes32 _gameId, uint _multiplyer, uint _maxBet, uint _duration)
   public
   onlyIfPredictionMarket(_predictionMarketAddress)
