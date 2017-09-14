@@ -59,4 +59,24 @@ contract PredictionMarketHub {
       return true;
   }
 
+  function suspendBetting(address _predictionMarketAddress, bytes32 _gameId)
+  public
+  onlyIfPredictionMarket(_predictionMarketAddress)
+  returns (bool success)
+  {
+      PredictionMarket predictionMarket = PredictionMarket(_predictionMarketAddress);
+      assert(predictionMarket.suspendBetting(msg.sender,_gameId));
+      return true;
+  }
+
+  function unSuspendBetting(address _predictionMarketAddress, bytes32 _gameId)
+  public
+  onlyIfPredictionMarket(_predictionMarketAddress)
+  returns (bool success)
+  {
+      PredictionMarket predictionMarket = PredictionMarket(_predictionMarketAddress);
+      assert(predictionMarket.suspendBetting(msg.sender,_gameId));
+      return true;
+  }
+
 }

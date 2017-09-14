@@ -19,7 +19,7 @@ contract PredictionMarket is Administered,usingOraclize {
 	 uint deadline;
 	 bool suspend;
 	 uint totalAmount;
-	 uint currentMultiplyer; //setting the odds, users will win amount bet * multiplier
+	 uint currentmultiplier; //setting the odds, users will win amount bet * multiplier
 	 uint maxBet;
 	 uint[] payouts; //total payouts for each answer
 	 uint maxPayout; //max to be paid out for this question
@@ -30,7 +30,7 @@ contract PredictionMarket is Administered,usingOraclize {
 	 bytes32 gameId;
 	 uint guess;
 	 uint amount;
-	 uint multiplyer;
+	 uint multiplier;
 	 uint amountPaid;
 	}
 
@@ -41,7 +41,7 @@ contract PredictionMarket is Administered,usingOraclize {
 	uint public totalMaxAtRisk; //total of max payouts for each question - total amount bet on each question (or 0 if negative)
 	bytes32 public diceWaitingForOraclize;
 
-	event LogNewDiceGame(bytes32 gameId, uint multiplyer, uint maxBet, uint deadline, address indexed administrator);
+	event LogNewDiceGame(bytes32 gameId, uint multiplier, uint maxBet, uint deadline, address indexed administrator);
 	event LogBet(bytes32 gameId, address indexed gambler, uint amount, uint guess);
 	event LogBettingSuspended(bytes32 gameId, address indexed administrator);
 	event LogBettingUnSuspended(bytes32 gameId, address indexed administrator);
@@ -57,21 +57,21 @@ contract PredictionMarket is Administered,usingOraclize {
 
 	}
 
-	function addNewDiceGame(address _originator, bytes32 _gameId, uint _multiplyer, uint _maxBet, uint _duration)
+	function addNewDiceGame(address _originator, bytes32 _gameId, uint _multiplier, uint _maxBet, uint _duration)
 	public
 	onlyHub
 	fromAdministrator(_originator)
 	returns (bool success)
 	{
-		//require(_multiplyer > 0 && _maxBet > 0);
+		require(_multiplier > 0 && _maxBet > 0);
 		DiceGameStruct diceGameStruct = games[_gameId];
-		//require(diceGameStruct.currentMultiplyer > 0); //do not use previously used Id
+		require(diceGameStruct.currentmultiplier == 0); //do not use previously used Id
 		uint deadline = block.number+_duration;
-		diceGameStruct.currentMultiplyer = _multiplyer;
+		diceGameStruct.currentmultiplier = _multiplier;
 		diceGameStruct.maxBet = _maxBet;
 		diceGameStruct.deadline = deadline;
 		diceGameStruct.payouts = new uint[](5);
-		LogNewDiceGame(_gameId,_multiplyer,_maxBet,deadline,msg.sender);
+		LogNewDiceGame(_gameId,_multiplier,_maxBet,deadline,_originator);
 		return true;
 	}
 
@@ -96,12 +96,12 @@ contract PredictionMarket is Administered,usingOraclize {
 		require(betStruct.gambler == address(0)); //_betId must be unique
 		require(_guess >= 1 && _guess <= 6); //_guess within range 1-6
 		DiceGameStruct diceGameStruct = games[_gameId];
-		require(diceGameStruct.currentMultiplyer >0); //Question should exist
+		require(diceGameStruct.currentmultiplier >0); //Question should exist
 		require(diceGameStruct.result == 0 && !diceGameStruct.suspend);
 		require(msg.value <= diceGameStruct.maxBet);
 
 		//Check we have required balance to cover risk
-		uint betPayout = SafeMath.mul(diceGameStruct.currentMultiplyer,msg.value);
+		uint betPayout = SafeMath.mul(diceGameStruct.currentmultiplier,msg.value);
 		uint updatedPayout = SafeMath.add(diceGameStruct.payouts[_guess-1],betPayout);
 		if(updatedPayout > diceGameStruct.maxPayout)
 		{
@@ -116,7 +116,7 @@ contract PredictionMarket is Administered,usingOraclize {
 		betStruct.gambler = msg.sender;
 		betStruct.gameId = _gameId;
 		betStruct.guess = _guess;
-		betStruct.multiplyer = diceGameStruct.currentMultiplyer;
+		betStruct.multiplier = diceGameStruct.currentmultiplier;
 		betStruct.amount = msg.value;
 
 		LogBet(_gameId,msg.sender,msg.value,_guess);
@@ -130,7 +130,7 @@ contract PredictionMarket is Administered,usingOraclize {
 	returns (bool success)
 	{
 		DiceGameStruct diceGameStruct = games[_gameId];
-		require(diceGameStruct.currentMultiplyer >0); //Question should exist
+		require(diceGameStruct.currentmultiplier >0); //Question should exist
 		require(diceGameStruct.result == 0); //question has not been answered
 		require(diceWaitingForOraclize == 0); //we can only answer one question at a time
 		require(diceGameStruct.deadline >= block.number);
@@ -151,7 +151,7 @@ contract PredictionMarket is Administered,usingOraclize {
     diceWaitingForOraclize = 0;
 
 		DiceGameStruct diceGameStruct = games[gameId];
-		require(diceGameStruct.currentMultiplyer >0); //Question should exist
+		require(diceGameStruct.currentmultiplier >0); //Question should exist
 		require(diceGameStruct.result == 0); //question has not been answered
 		uint diceRoll = parseInt(result);
 		diceGameStruct.result = diceRoll;
@@ -167,7 +167,7 @@ contract PredictionMarket is Administered,usingOraclize {
 		DiceGameStruct diceGameStruct = games[betStruct.gameId];
 		require(diceGameStruct.result > 0 && betStruct.guess == diceGameStruct.result); //question has been answered and the bet was correct
 		require(betStruct.amountPaid == 0); //bet must not have already been paid out
-		uint winnings = SafeMath.mul(betStruct.amount,betStruct.multiplyer);
+		uint winnings = SafeMath.mul(betStruct.amount,betStruct.multiplier);
 		require(winnings > 0);
 		betStruct.amountPaid = winnings;
 		balance = SafeMath.sub(balance,winnings);
@@ -201,7 +201,7 @@ contract PredictionMarket is Administered,usingOraclize {
 		DiceGameStruct diceGameStruct = games[_gameId];
 		require(diceGameStruct.result == 0 && !diceGameStruct.suspend); //can only suspend a live question
 		diceGameStruct.suspend = true;
-		LogBettingSuspended(_gameId,msg.sender);
+		LogBettingSuspended(_gameId,_originator);
 		return true;
 	}
 
@@ -214,7 +214,7 @@ contract PredictionMarket is Administered,usingOraclize {
 		DiceGameStruct diceGameStruct = games[_gameId];
 		require(diceGameStruct.result == 0 && diceGameStruct.suspend); //can only unsuspend a suspended question
 		diceGameStruct.suspend = false;
-		LogBettingUnSuspended(_gameId,msg.sender);
+		LogBettingUnSuspended(_gameId,_originator);
 		return true;
 	}
 

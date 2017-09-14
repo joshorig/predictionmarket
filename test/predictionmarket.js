@@ -88,29 +88,33 @@ contract('PredictionMarket', function(accounts) {
   });
 
   it("Should allow admin to create a new dice game", async () => {
+
     await predictionMarketHub.addAdministrator(predictionMarketAddress,newAdminAccount, {from: ownerAccount});
     let txObject = await predictionMarketHub.addNewDiceGame(predictionMarketAddress,gameId,multiplier,maxBet,duration,{from: newAdminAccount});
+    let currentBlock = web3.eth.blockNumber;
 
     utils.getEventsPromise(predictionMarket.LogNewDiceGame({}, { fromBlock: web3.eth.blockNumber }))
     .then(function (events) {
       assert.equal(events.length,1,"Did not log LogNewDiceGame event");
       let logEvent = events[0];
       assert.equal(logEvent.args.gameId,gameId,"Did not log gameId correctly");
-      assert.equal(logEvent.args.multiplyer.valueOf(),multiplyer,"Did not log multiplyer correctly");
+      assert.equal(logEvent.args.multiplier.valueOf(),multiplier,"Did not log multiplyer correctly");
       assert.equal(logEvent.args.maxBet.valueOf(),maxBet,"Did not log maxBet correctly");
-      assert.equal(logEvent.args.deadline.valueOf(),deadline,"Did not log deadline correctly");
+      assert.equal(logEvent.args.deadline.valueOf(),(currentBlock+duration),"Did not log deadline correctly");
       assert.equal(logEvent.args.administrator,newAdminAccount,"Did not log administrator correctly");
     });
   });
 
-    it("Should not allow non admin to create a new dice game", async () => {
-      try {
-        let txObject = await predictionMarketHub.addNewDiceGame(predictionMarketAddress,gameId,multiplier,maxBet,duration,{from: nonAdminAccount});
-        assert.equal(txObject.receipt.gasUsed, utils.exceptionGasToUse, "should have used all the gas");
-      }
-      catch (error){
-        return utils.ensureException(error);
-      }
-    });
+  it("Should not allow non admin to create a new dice game", async () => {
+    try {
+      let txObject = await predictionMarketHub.addNewDiceGame(predictionMarketAddress,gameId,multiplier,maxBet,duration,{from: nonAdminAccount});
+      assert.equal(txObject.receipt.gasUsed, utils.exceptionGasToUse, "should have used all the gas");
+    }
+    catch (error){
+      return utils.ensureException(error);
+    }
+  });
+
+
 
 });
